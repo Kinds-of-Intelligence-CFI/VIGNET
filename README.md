@@ -16,7 +16,7 @@ Additionally, we keep a portion of the samples private in order to compare futur
 
 First you need access to the code from this repo. you can clone it using the command 
 ```bash
-git clone git@github.com:JonnyP1990/vignette-battery.git
+git clone git@github.com:Kinds-of-Intelligence-CFI/INTUIT.git
 ```
 Alternatively you can clone the repo using github desktop or another git manager.
 

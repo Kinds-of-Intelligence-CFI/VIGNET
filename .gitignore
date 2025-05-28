@@ -17,3 +17,6 @@ __pycache__/
 gpt-4o.jsonl
 edit_slurms.py
 /.idea
+*.jsonl
+*.sh
+/vignette_slurms

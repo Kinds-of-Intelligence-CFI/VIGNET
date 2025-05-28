@@ -333,3 +333,8 @@ print(f"openai organization: {client.organization}")
 
 ## list all batches
 pretty_print_batches(client.batches.list(), format="detailed", use_colors=True)
+
+for batch in client.batches.list():
+    if batch.metadata is not None:
+        if "model" in batch.metadata and batch.status == "completed":
+            print(f"Batch ID: {batch.id}, Model: {batch.metadata['model']}")

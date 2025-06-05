@@ -63,7 +63,7 @@ Initially the templates were stored as dictionaries hard coded in python. They w
 
 # Run evaluation on language models
 
-Now that we have a dataset file with all of the question, answers, demmands and everythign else we need we can test the performance of language models.
+Now that we have a dataset file with all of the question, answers, demmands and everything else we need, we can test the performance of language models.
 To do this use the following command
 
 ```bash
@@ -128,7 +128,6 @@ python list_batch_jobs.py --batch_id all
 
 # Results visualisation
 
-This should probably be moved to a jupyter notebook to its easier for non-technical people.
 To create the visualisations of our results we use the jupyter notebook file analysis.ipynb. If you want to build your own visualisation feel free to use it as a starting point if it is useful. Note: many of the changes to the human side of the data is because of the specific format we ingest the results as.
 
 

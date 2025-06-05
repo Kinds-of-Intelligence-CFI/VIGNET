@@ -133,15 +133,17 @@ To create the visualisations of our results we use the jupyter notebook file ana
 
 # Adding to the dataset
 
-The dataset uses a complex template method to produce the final output dataset. This allows for the creation of many variations on the same or similar situations while reducing repetition. This can be hard to get started with but we provide a GUI application to make it easier for users and to prevent errors.
+VIGNET generates a battery using a set of templates. This allows for the creation of many variations that vary in systematic and random ways. 
+
+We have included a Graphic User Interface (GUI) to help with the creation and editing of templates.
 
 To use it run the python file modify_context_template.py
 ```bash
 python modify_context_template.py
 ```
 
-The paper explains the template format in more detail but for a quick overview:
-Context templates contain all of the variables and switches for a given scenario (usually with 2 versions) given an array that defines which value each switch should be set to it can be used to produce a string containing all the context information for the question.
+There are two types of templates: Context and QA templates.
 
-QA templates define a question and a set of answers to be posed after the context has been generated. For each answer there is a link table that defines which value for each switch to use when generating the context.
+Context templates contain all the variables and switches for any given story scenario. QA templates define a question and set of answer options related to a particular context. Templates can be used to generate a specific vignette instance (a string array containing the story, question and answer options) by passing an array defining which value each switch should be set to.
+
 

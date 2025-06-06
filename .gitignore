@@ -20,3 +20,4 @@ edit_slurms.py
 *.jsonl
 *.sh
 /vignette_slurms
+/dataframes

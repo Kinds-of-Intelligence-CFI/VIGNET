@@ -74,5 +74,7 @@ We have included a Graphic User Interface (GUI) to help with the creation and ed
 
 To use it run the python file modify_context_template.py
 ```bash
-python modify_context_template.py
+python modify_template.py
 ```
+
+Once the GUI opens, you can load the Context or QA template file you want to modify using the 'Load JSON' button.

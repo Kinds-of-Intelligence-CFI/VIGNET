@@ -111,6 +111,6 @@ if __name__ == "__main__":
     
     battery_df.to_csv(os.path.join(data_path,output_file), index=False)
     elapsed = time.time() - t
-    print("\ntime elapsed: " + str(elapsed))
+    print("\ntime elapsed: " + str(round(elapsed)) + " seconds.")
 
 

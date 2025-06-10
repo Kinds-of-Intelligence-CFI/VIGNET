@@ -276,9 +276,36 @@ class Compiler:
         self._select_pov()
         self._apply_switches()
         fmt = ExtendedFormatter()
-        for num, switch in enumerate(self.template["switches"].keys()):
-            self.var_dict[switch] = fmt.format(
-                self.template["switches"][switch][self.vignette_switches[num]], vs=self.var_dict)
+        
+        max_iterations = 100
+        unresolved_switches = list(self.template["switches"].keys())
+        for iteration in range(max_iterations):
+            if not unresolved_switches:
+                break
+                
+            missing_switches = []
+            newly_resolved = []
+            for switch in unresolved_switches[:]:
+                try:
+                    switch_index = list(self.template["switches"].keys()).index(switch)
+                    self.var_dict[switch] = fmt.format(
+                        self.template["switches"][switch][self.vignette_switches[switch_index]], vs=self.var_dict)
+                    newly_resolved.append(switch)
+                except (KeyError, ValueError) as e:
+                    missing_switches.append(e)
+                    continue
+            
+            for switch in newly_resolved:
+                unresolved_switches.remove(switch)
+
+            #print(f"Iteration {iteration + 1}: Resolved switches: {newly_resolved}, Unresolved switches: {unresolved_switches}")
+            #print(f"Missing switches: {missing_switches}")
+            
+            if not newly_resolved:
+                break
+        
+        if unresolved_switches:
+            raise Exception(f"Could not resolve switches: {unresolved_switches}")
         for v in self.var_dict.keys():
             self.var_dict[v] = fmt.format(self.var_dict[v], vs=self.var_dict)
         self._stitch_together_question(randomise=True)

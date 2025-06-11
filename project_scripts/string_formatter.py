@@ -1,7 +1,7 @@
 from string import Formatter
 
 class ExtendedFormatter(Formatter):
-    """An extended format string formatter with pronoun support"""
+    """An extended string formatter with pronoun support"""
 
     def format_field(self, value, format_spec):
         """Handle format specifications
@@ -35,7 +35,7 @@ class ExtendedFormatter(Formatter):
         return super().format_field(value, format_spec)
 
     def convert_field(self, value, conversion):
-        """Handle basic conversions (u, l, c)"""
+        """Handle basic conversions (!u, !l, !c)"""
         if conversion == "u":
             return str(value).upper()
         elif conversion == "l":

@@ -70,9 +70,7 @@ VIGNET generates a battery using a set of templates. This allows for the creatio
 
 The INTUIT folder contains the Context and QA templates stored as JSON files. Context templates contain all the variables and switches for any given story scenario. QA templates define a question and set of answer options related to a Context template. 
 
-We have included a Graphic User Interface (GUI) to help with the creation and editing of templates.
-
-To use it run the python file modify_context_template.py
+We have included a Graphic User Interface (GUI) to help with the creation and editing of templates. Run it using:
 ```bash
 python modify_template.py
 ```

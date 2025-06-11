@@ -110,6 +110,10 @@ class Compiler:
             self._get_labels("activities")
 
     def _select_pov(self):
+        """
+        Use these point of view variables in place of their values within context templates to allow switching
+        between first- and third-person perspectives.
+        """
         if self.difficulty["third_person"]:
             idx = self.rd_gen.randint(0, len(self.var_options["name"]) - 1)
             random_name = self.var_options["name"].pop(idx)

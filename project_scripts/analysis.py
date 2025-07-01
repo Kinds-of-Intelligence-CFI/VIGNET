@@ -2,7 +2,7 @@ import os
 import numpy as np
 import seaborn as sns
 import matplotlib
-matplotlib.use("TKAgg")
+
 import matplotlib.pyplot as plt
 
 path = os.getcwd()
@@ -25,16 +25,23 @@ class Analyser:
             self.results["correct_answer_text"] = [
                 x.replace(char,"") for x in self.results["correct_answer_text"].astype(str)]
 
+    def to_int_string(self,value):
+        try:
+            return str(int(value))
+        except (ValueError, TypeError):
+            raise ValueError(f"Cannot convert {value!r} to an integer string.")
+
     def check_answers(self,**kwargs):
         """
         Specify method: "either_text_or_number" or "both_text_and_number"
         """
         params = {"method": "just_number",
                   "wrong_format_answer": np.nan,
-                  "print_proportion": True}
+                  "print_proportion": True,
+                  "print_missingness": True}
         for key, value in kwargs.items():
             params[key] = value
-        self.results["answer_num"] = self.results["answer_num"].astype(str)
+        self.results["answer_num"] = self.results["answer_num"].apply(self.to_int_string)
         accepted_numbers = ["1","2","3","4"]
         to_remove = [".","_"," ",'"',"'"] + accepted_numbers
         self.clean_text(to_remove)
@@ -60,18 +67,29 @@ class Analyser:
             raise Exception("Incorrect method.")
         self.results.loc[self.results["answer_num"] == 0, "llm_correct"] = params["wrong_format_answer"]
         if params["print_proportion"]:
-            self.proportion_correct = self.results["llm_correct"].sum() / len(self.results)
+            self.proportion_correct = self.results.groupby("model")["llm_correct"].mean().reset_index()
+            self.proportion_correct["llm_correct"] = self.proportion_correct["llm_correct"].round(2)
             self.chance_correct = 1 / len(accepted_numbers)
             if params["method"] == "both_text_and_number":
-                self.chance_correct = self.chance_correct * self.chance_correct
-            print("proportion correct: " + str(round(self.proportion_correct,2)))
-            print("chance: " + str(round(self.chance_correct,2)))
+                self.chance_correct *= self.chance_correct
+            print("proportion correct:\n", self.proportion_correct)
+            print("chance:", round(self.chance_correct, 2))
+        if params["print_missingness"]:
+            self.missingness = (
+                (self.results["answer_num"] == 0)
+                .groupby(self.results["model"])
+                .mean()
+                .reset_index(name="missing_rate")
+            )
+            self.missingness["missing_rate"] = self.missingness["missing_rate"].round(2)
+            print("missingness summary:\n", self.missingness)
 
     def plot_accuracy(self,by="target_demand",
                       and_by = None,
                       subset = None,
                       title = "",
                       save_fig = True,
+                      show_fig = True,
                       save_path = plots_path,
                       dpi = 200,
                       palette = "Blues_d",
@@ -120,6 +138,8 @@ class Analyser:
                         bbox_inches='tight',
                         format="jpg",
                         dpi=dpi)
+        if show_fig:
+            plt.show()
 
     def plot_histogram(self, **kwargs):
         params = {"subset": None,
@@ -153,12 +173,3 @@ class Analyser:
                     bbox_inches='tight',
                     format="jpg",
                     dpi=params["dpi"])
-
-
-
-
-
-
-
-
-

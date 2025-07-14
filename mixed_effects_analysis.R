@@ -3,7 +3,7 @@ library("fixest"); library("rstatix"); library("lmerTest"); library("tidyverse")
 library("ggplot2"); library("data.table"); library("marginaleffects")
 library("margins"); library("modelsummary"); library("parameters"); library("readr")
 library("lme4"); library("lfe"); library("this.path"); library("kableExtra"); 
-library("knitr")
+library("knitr"); library("dplyr"); library("emmeans")
 
 setwd(this.dir())
 
@@ -28,6 +28,17 @@ single_model <- lmer(
   data = df,
   control = lmerControl(optimizer = "bobyqa")
 )
+parameters(single_model)
+summary(single_model)
+
+emm <- emmeans(single_model, ~ model)
+contrast_results <- contrast(emm, method = "pairwise")
+summary(contrast_results)
+
+# Optional: extract specifically the gpt-4o vs baseline comparison
+# Assuming 'baseline' is the reference model
+summary(contrast_results, infer = c(TRUE, TRUE))
+
 
 # Demands model
 single_interaction_model <- lmer(
@@ -45,6 +56,12 @@ anova(single_model, single_interaction_model)
 
 mean(df$accuracy, na.rm = TRUE)
 
+df %>%
+  group_by(model, condition) %>%
+  summarise(mean_accuracy = mean(accuracy, na.rm = TRUE)) %>%
+  arrange(model, condition) %>%
+  print(n = Inf)
+
 #### double capability
 df <- read_csv("paper_results/double_df.csv")
 df$model <- factor(df$model, levels = c("Human", "gpt-4o", "gpt-4o-mini", "gpt-4.1-mini", "o3-mini"))
@@ -60,6 +77,8 @@ double_model <- lmer(
   data = df,
   control = lmerControl(optimizer = "bobyqa")
 )
+parameters(double_model)
+summary(double_model)
 
 double_interaction_model <- lmer(
   accuracy ~ model + condition + inference_level + 
@@ -71,6 +90,7 @@ double_interaction_model <- lmer(
     (1|id),
   data = df
 )
+
 
 #### Perturbations
 df <- read_csv("paper_results/perturbation_df.csv")
@@ -130,6 +150,33 @@ latex_table <- modelsummary(
 )
 latex_table <- paste0("\\begingroup\\small\n", latex_table, "\n\\endgroup")
 writeLines(latex_table, "paper_results/latex_tables/perturbation_summary.tex")
+
+
+
+# Accuracy summary
+single_df <- read_csv("paper_results/single_df.csv") %>%
+  group_by(model, condition) %>%
+  summarise(mean_accuracy = mean(accuracy, na.rm = TRUE)) %>%
+  mutate(capability = "Single")
+
+double_df <- read_csv("paper_results/double_df.csv") %>%
+  group_by(model, condition) %>%
+  summarise(mean_accuracy = mean(accuracy, na.rm = TRUE)) %>%
+  mutate(capability = "Double")
+
+combined_accuracy <- bind_rows(single_df, double_df)
+
+wide_accuracy <- combined_accuracy %>%
+  mutate(column_label = paste0(capability, "_", condition)) %>%
+  select(model, column_label, mean_accuracy) %>%
+  pivot_wider(names_from = column_label, values_from = mean_accuracy)
+
+accuracy_latex <- wide_accuracy %>%
+  kable("latex", booktabs = TRUE, digits = 3,
+        caption = "Mean Accuracy by Model, Condition, and Capability") %>%
+  kable_styling(latex_options = c("hold_position", "scale_down"))
+
+writeLines(accuracy_latex, "paper_results/latex_tables/accuracy_summary.tex")
 
 
 

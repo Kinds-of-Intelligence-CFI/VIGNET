@@ -80,6 +80,10 @@ double_model <- lmer(
 parameters(double_model)
 summary(double_model)
 
+emm <- emmeans(double_model, ~ model)
+contrast_results <- contrast(emm, method = "pairwise")
+summary(contrast_results)
+
 double_interaction_model <- lmer(
   accuracy ~ model + condition + inference_level + 
     model:condition +

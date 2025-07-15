@@ -35,6 +35,17 @@ emm <- emmeans(single_model, ~ model)
 contrast_results <- contrast(emm, method = "pairwise")
 summary(contrast_results)
 
+single_model_IL <- lmer(
+  accuracy ~ model + condition + inference_level + 
+    model:inference_level +
+    (1|id),
+  data = df,
+  control = lmerControl(optimizer = "bobyqa")
+)
+parameters(single_model_IL)
+summary(single_model_IL)
+
+
 # Optional: extract specifically the gpt-4o vs baseline comparison
 # Assuming 'baseline' is the reference model
 summary(contrast_results, infer = c(TRUE, TRUE))
@@ -84,6 +95,16 @@ emm <- emmeans(double_model, ~ model)
 contrast_results <- contrast(emm, method = "pairwise")
 summary(contrast_results)
 
+double_model_IL <- lmer(
+  accuracy ~ model + condition + inference_level + 
+    model:inference_level +
+    (1|id),
+  data = df,
+  control = lmerControl(optimizer = "bobyqa")
+)
+parameters(double_model_IL)
+summary(double_model_IL)
+
 double_interaction_model <- lmer(
   accuracy ~ model + condition + inference_level + 
     model:condition +
@@ -94,7 +115,6 @@ double_interaction_model <- lmer(
     (1|id),
   data = df
 )
-
 
 #### Perturbations
 df <- read_csv("paper_results/perturbation_df.csv")
@@ -120,6 +140,8 @@ perturbation_model <- lmer(
 )
 
 
+
+
 # Export LaTeX summaries
 modelsummary_config <- list(
   output = "latex",
@@ -131,9 +153,9 @@ options(modelsummary_factory_latex = "kableExtra")
 options(modelsummary_format_numeric_latex = "plain")
 
 latex_table <- modelsummary(
-  list("Single Capability" = single_model, 
-       "Double Capability" = double_model, 
-       "Single with Demands" = single_interaction_model, 
+  list("Single Capability" = single_model_IL, 
+       "Double Capability" = double_model_IL, 
+      "Single with Demands" = single_interaction_model, 
        "Double with Demands" = double_interaction_model),
   output = "latex",
   fmt = 3,
@@ -155,7 +177,19 @@ latex_table <- modelsummary(
 latex_table <- paste0("\\begingroup\\small\n", latex_table, "\n\\endgroup")
 writeLines(latex_table, "paper_results/latex_tables/perturbation_summary.tex")
 
-
+latex_table <- modelsummary(
+  list("Single with Conditions" = single_model, 
+       "Double with Conditions" = double_model,
+       "Single with Inference Level" = single_model_IL, 
+       "Double with Inference Level" = double_model_IL),
+  output = "latex",
+  fmt = 3,
+  statistic = "std.error",
+  stars = TRUE,
+  longtable = TRUE
+)
+latex_table <- paste0("\\begingroup\\small\n", latex_table, "\n\\endgroup")
+writeLines(latex_table, "paper_results/latex_tables/Inference_Level_summary.tex")
 
 # Accuracy summary
 single_df <- read_csv("paper_results/single_df.csv") %>%
@@ -181,6 +215,25 @@ accuracy_latex <- wide_accuracy %>%
   kable_styling(latex_options = c("hold_position", "scale_down"))
 
 writeLines(accuracy_latex, "paper_results/latex_tables/accuracy_summary.tex")
+
+#### Long-form summary with explicit columns ####
+perturbation_long_summary <- df %>%
+  pivot_longer(cols = c(spacing, character, capitalisation), 
+               names_to = "perturbation_type", 
+               values_to = "perturbation_level") %>%
+  group_by(model, perturbation_type, perturbation_level) %>%
+  summarise(mean_accuracy = mean(accuracy, na.rm = TRUE), .groups = "drop") %>%
+  arrange(model, perturbation_type, perturbation_level)
+
+print(perturbation_long_summary, n = Inf)
+
+# LaTeX output
+perturbation_long_latex <- perturbation_long_summary %>%
+  kable("latex", booktabs = TRUE, digits = 3,
+        caption = "Mean Accuracy by Model, Perturbation Type, and Perturbation Level") %>%
+  kable_styling(latex_options = c("hold_position", "scale_down"))
+
+writeLines(perturbation_long_latex, "paper_results/latex_tables/perturbation_accuracy_summary.tex")
 
 
 

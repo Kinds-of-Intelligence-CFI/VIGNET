@@ -56,16 +56,19 @@ class Compiler:
         self.correct_answer_text = None
 
     def _randomise_rows(self, df, **kwargs):
-        params = {"weights": None}
-        for key, value in kwargs.items():
-            params[key] = value
+        weights = kwargs.get("weights", None)
+
+        if weights is not None:
+            w = weights.reindex(df.index).values
+            w = w / w.sum()
+            indices = self.rng.choice(len(df), size=len(df), replace=False, p=w)
+            return df.iloc[indices].reset_index(drop=True)
 
         if self.random_seed is not None:
             random_state = self.rng.randint(0, 2_000_000_000)
         else:
             random_state = None
-
-        return df.sample(frac=1, weights=params["weights"], random_state=random_state).reset_index(drop=True)
+        return df.sample(frac=1, random_state=random_state).reset_index(drop=True)
 
     def _get_labels(self, label_type):
         labels = self.template[label_type]

@@ -16,9 +16,14 @@ from nicegui import ui
 from project_scripts.compiler import Compiler
 from web_editor.editor_logic import (
     append_new_switch_to_qa_files,
+    create_context_template,
+    create_qa_template,
+    get_base_context_number,
     get_context_template_dict,
+    get_next_qa_id,
     handle_add_special_cases,
     handle_delete_special_cases,
+    list_scenario_dirs,
     load_activities_data,
     load_demand_data,
     load_items_data,
@@ -26,9 +31,12 @@ from web_editor.editor_logic import (
     load_weights_data,
     populate_variables,
     validate_delete,
+    validate_qa_id,
+    validate_scenario_name,
     validate_update,
     value_from_string,
     type_of_value,
+    _has_context_template,
 )
 from web_editor.file_picker import LocalFilePicker
 from web_editor.state import (
@@ -173,6 +181,154 @@ def build_ui(
             ui.notify(err, type="negative")
         else:
             status_label.set_text(f"{label} loaded: {os.path.basename(path)}")
+
+    # ------------------------------------------------------------------
+    # Template / folder creation dialogs
+    # ------------------------------------------------------------------
+
+    dataset_dir = os.path.join(os.getcwd(), "dataset")
+
+    async def new_scenario_folder() -> None:
+        with ui.dialog() as dialog, ui.card().classes("w-96"):
+            ui.label("New Scenario Folder").classes("text-lg font-bold")
+            name_input = ui.input(label="Folder name").classes("w-full")
+            error_label = ui.label("").classes("text-red-500 text-sm")
+
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Cancel", on_click=dialog.close)
+
+                def on_ok():
+                    name = name_input.value.strip()
+                    ok, reason = validate_scenario_name(name, dataset_dir)
+                    if not ok:
+                        error_label.set_text(reason)
+                        return
+                    os.makedirs(os.path.join(dataset_dir, name))
+                    ui.notify(f"Created folder: {name}", type="positive")
+                    status_label.set_text(f"Created scenario folder: {name}")
+                    dialog.close()
+
+                ui.button("OK", on_click=on_ok).props("color=primary")
+        dialog.open()
+
+    async def new_context_template() -> None:
+        dirs = list_scenario_dirs(dataset_dir)
+        available = [
+            d for d in dirs
+            if not _has_context_template(os.path.join(dataset_dir, d))
+        ]
+        if not available:
+            ui.notify(
+                "No scenario folders available (all already have a context template, or none exist).",
+                type="warning",
+            )
+            return
+
+        with ui.dialog() as dialog, ui.card().classes("w-96"):
+            ui.label("New Context Template").classes("text-lg font-bold")
+            folder_select = ui.select(
+                options=available, label="Scenario folder"
+            ).classes("w-full")
+            error_label = ui.label("").classes("text-red-500 text-sm")
+
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Cancel", on_click=dialog.close)
+
+                def on_ok():
+                    scenario_name = folder_select.value
+                    if not scenario_name:
+                        error_label.set_text("Select a folder.")
+                        return
+                    scenario_dir = os.path.join(dataset_dir, scenario_name)
+                    file_path, err = create_context_template(scenario_dir, scenario_name)
+                    if err:
+                        error_label.set_text(err)
+                        return
+                    # auto-load into editor
+                    with open(file_path, "r") as f:
+                        state.json_data = json.load(f)
+                    state.current_file = file_path
+                    populate_variables(state)
+                    rebuild_tree()
+                    ui.notify(f"Created: {os.path.basename(file_path)}", type="positive")
+                    status_label.set_text(f"Created: {os.path.basename(file_path)}")
+                    dialog.close()
+
+                ui.button("OK", on_click=on_ok).props("color=primary")
+        dialog.open()
+
+    async def new_qa_template() -> None:
+        dirs = list_scenario_dirs(dataset_dir)
+        available = [
+            d for d in dirs
+            if _has_context_template(os.path.join(dataset_dir, d))
+        ]
+        if not available:
+            ui.notify(
+                "No scenario folders with a context template found.",
+                type="warning",
+            )
+            return
+
+        with ui.dialog() as dialog, ui.card().classes("w-96"):
+            ui.label("New QA Template").classes("text-lg font-bold")
+            folder_select = ui.select(
+                options=available, label="Scenario folder"
+            ).classes("w-full")
+            version_sel = ui.select(
+                options=POTENTIAL_VERSIONS, label="Version", value="A"
+            ).classes("w-full")
+            id_input = ui.input(label="QA ID").classes("w-full")
+            error_label = ui.label("").classes("text-red-500 text-sm")
+
+            def refresh_suggestion():
+                scenario_name = folder_select.value
+                ver = version_sel.value
+                if scenario_name and ver:
+                    scenario_dir = os.path.join(dataset_dir, scenario_name)
+                    suggestion = get_next_qa_id(scenario_dir, dataset_dir, ver)
+                    id_input.set_value(suggestion)
+
+            folder_select.on_value_change(lambda _: refresh_suggestion())
+            version_sel.on_value_change(lambda _: refresh_suggestion())
+
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Cancel", on_click=dialog.close)
+
+                def on_ok():
+                    scenario_name = folder_select.value
+                    ver = version_sel.value
+                    qa_id = id_input.value.strip()
+                    if not scenario_name:
+                        error_label.set_text("Select a folder.")
+                        return
+                    if not ver:
+                        error_label.set_text("Select a version.")
+                        return
+                    scenario_dir = os.path.join(dataset_dir, scenario_name)
+                    ok, reason = validate_qa_id(qa_id, scenario_dir)
+                    if not ok:
+                        error_label.set_text(reason)
+                        return
+                    bcn = get_base_context_number(scenario_dir, dataset_dir)
+                    file_path, err = create_qa_template(
+                        scenario_dir, scenario_name, ver, qa_id, bcn
+                    )
+                    if err:
+                        error_label.set_text(err)
+                        return
+                    # auto-load into editor
+                    with open(file_path, "r") as f:
+                        state.json_data = json.load(f)
+                    state.current_file = file_path
+                    populate_variables(state)
+                    rebuild_tree()
+                    ui.notify(f"Created: {os.path.basename(file_path)}", type="positive")
+                    status_label.set_text(f"Created: {os.path.basename(file_path)}")
+                    dialog.close()
+
+                ui.button("OK", on_click=on_ok).props("color=primary")
+        dialog.open()
 
     # ------------------------------------------------------------------
     # Editor actions
@@ -460,6 +616,10 @@ def build_ui(
     # --- Top button bar ---
     with ui.row().classes("w-full items-center gap-2 p-2"):
         ui.button("Open JSON", on_click=open_json)
+        with ui.dropdown_button("New...", auto_close=True):
+            ui.item("New Scenario Folder", on_click=new_scenario_folder)
+            ui.item("New Context Template", on_click=new_context_template)
+            ui.item("New QA Template", on_click=new_qa_template)
         ui.button("Save", on_click=save_json)
         ui.button("Demand CSV", on_click=lambda: _open_csv(load_demand_data, "Demand"))
         ui.button("Item CSV", on_click=lambda: _open_csv(load_items_data, "Item"))

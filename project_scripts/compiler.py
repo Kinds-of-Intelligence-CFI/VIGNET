@@ -5,7 +5,7 @@ import pandas as pd
 import string
 import re
 
-from project_scripts.string_formatter import ExtendedFormatter
+from project_scripts.string_formatter import AnnotatingFormatter, ExtendedFormatter
 
 path = os.getcwd()
 
@@ -333,6 +333,75 @@ class Compiler:
             for char in character_list:
                 new_character = char.upper()
                 self._replace_characters(char, new_character, self.difficulty["capitalisation"][1])
+
+    def _replace_a_with_an_segments(self, segments):
+        """Apply a/an correction within and across segment boundaries."""
+        for seg in segments:
+            seg.text = self._replace_a_with_an(seg.text)
+        for i in range(len(segments) - 1):
+            curr = segments[i]
+            nxt = segments[i + 1]
+            if curr.text.endswith("a ") and nxt.text and nxt.text[0].lower() in "aeiou":
+                exceptions = ["used", "used-car"]
+                next_word = nxt.text.split()[0] if nxt.text.split() else ""
+                if next_word.lower() not in exceptions:
+                    if curr.text[-2:] == "A ":
+                        curr.text = curr.text[:-2] + "An "
+                    else:
+                        curr.text = curr.text[:-2] + "an "
+        return segments
+
+    def read_vignettes_annotated(self):
+        """Like read_vignettes but produces annotated segments instead of plain text."""
+        self._select_pov()
+        self._apply_switches()
+        fmt = ExtendedFormatter()
+
+        # Phase 1: resolve switches (identical to read_vignettes)
+        max_iterations = 100
+        unresolved_switches = list(self.template["switches"].keys())
+        for iteration in range(max_iterations):
+            if not unresolved_switches:
+                break
+            newly_resolved = []
+            for switch in unresolved_switches[:]:
+                try:
+                    switch_index = list(self.template["switches"].keys()).index(switch)
+                    self.var_dict[switch] = fmt.format(
+                        self.template["switches"][switch][self.vignette_switches[switch_index]],
+                        vs=self.var_dict)
+                    newly_resolved.append(switch)
+                except (KeyError, ValueError):
+                    continue
+            for switch in newly_resolved:
+                unresolved_switches.remove(switch)
+            if not newly_resolved:
+                break
+        if unresolved_switches:
+            raise Exception(f"Could not resolve switches: {unresolved_switches}")
+
+        # Phase 2: flatten var_dict values (identical to read_vignettes)
+        for v in self.var_dict.keys():
+            self.var_dict[v] = fmt.format(self.var_dict[v], vs=self.var_dict)
+
+        # Phase 3: annotated formatting
+        self._stitch_together_question(randomise=True)
+        afmt = AnnotatingFormatter()
+        context_segments = afmt.annotated_format(self.template["context"], self.var_dict)
+        question_segments = afmt.annotated_format(self.question, self.var_dict)
+        all_segments = context_segments + question_segments
+
+        # Phase 4: article correction on segments
+        all_segments = self._replace_a_with_an_segments(all_segments)
+
+        self.annotated_segments = all_segments
+
+    def compile_annotated(self):
+        """Compile a single annotated vignette (no perturbations)."""
+        self._define_variable_options()
+        self.select_variables()
+        self.read_vignettes_annotated()
+        return self.annotated_segments
 
     def compile_battery(self, iterations):
         self.battery = pd.DataFrame(columns=["vignette",

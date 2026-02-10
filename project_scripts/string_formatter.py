@@ -1,4 +1,38 @@
+from dataclasses import dataclass
 from string import Formatter
+
+
+@dataclass
+class AnnotatedSegment:
+    """A tagged text segment from template formatting."""
+    text: str
+    source_type: str  # "template", "variable", "switch", "filler", "pov", "coinflip", "item", "activity", "number"
+    source_key: str | None  # e.g. "name_1", "switch_3", None for template literals
+
+
+_CATEGORY_MAP = {
+    "pov": "pov",
+    "switch": "switch",
+    "filler": "filler",
+    "coinflip": "coinflip",
+    "otherside": "coinflip",
+    "item": "item",
+    "activity": "activity",
+    "smallnumber": "number",
+    "bignumber": "number",
+}
+
+
+def classify_variable(field_name: str) -> tuple[str, str]:
+    """Categorize a variable name by its prefix.
+
+    Returns (source_type, source_key) where source_type is one of the
+    segment categories and source_key is the full field name.
+    """
+    prefix = field_name.split("_")[0]
+    source_type = _CATEGORY_MAP.get(prefix, "variable")
+    return source_type, field_name
+
 
 class ExtendedFormatter(Formatter):
     """An extended string formatter with pronoun support"""
@@ -43,3 +77,29 @@ class ExtendedFormatter(Formatter):
         elif conversion == "c":
             return str(value).capitalize()
         return super().convert_field(value, conversion)
+
+
+class AnnotatingFormatter(ExtendedFormatter):
+    """Formatter that produces AnnotatedSegment lists instead of plain strings."""
+
+    def annotated_format(self, format_string: str, var_dict: dict) -> list[AnnotatedSegment]:
+        segments: list[AnnotatedSegment] = []
+        for literal_text, field_name, format_spec, conversion in self.parse(format_string):
+            if literal_text:
+                segments.append(AnnotatedSegment(literal_text, "template", None))
+            if field_name is not None:
+                obj, _ = self.get_field(field_name, (), {"vs": var_dict})
+                if conversion:
+                    obj = self.convert_field(obj, conversion)
+                if format_spec:
+                    obj = self.format_field(obj, format_spec)
+                else:
+                    obj = self.format_field(obj, "")
+
+                # extract the key from "vs[name_1]" -> "name_1"
+                key = field_name
+                if "[" in field_name and "]" in field_name:
+                    key = field_name.split("[")[1].rstrip("]")
+                source_type, source_key = classify_variable(key)
+                segments.append(AnnotatedSegment(str(obj), source_type, source_key))
+        return segments

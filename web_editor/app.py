@@ -39,6 +39,7 @@ from web_editor.editor_logic import (
     _has_context_template,
 )
 from web_editor.file_picker import LocalFilePicker
+from web_editor.highlight import build_legend_html, segments_to_html
 from web_editor.state import (
     CONTEXT_TEMPLATE,
     NEVER_DELETE_KEYS,
@@ -552,9 +553,9 @@ def build_ui(
         difficulty = {
             "third_person": tp,
             "inference_level": int(inf),
-            "double_spaces": True,
-            "character_noise": (0, 0.1),
-            "capitalisation": (0, 0.8),
+            "double_spaces": False,
+            "character_noise": False,
+            "capitalisation": False,
         }
 
         qa_template_dict = {
@@ -601,9 +602,10 @@ def build_ui(
                 template_df, variable_df, weights_df,
                 item_df, activity_df,
             )
-            mini_battery = vignette.compile_battery(1)
-            sample = mini_battery["vignette"].iloc[0]
-            sample_display.set_value(sample)
+            segments = vignette.compile_annotated()
+            rendered = segments_to_html(segments)
+            sample_display.set_content(rendered)
+            legend_container.set_content(build_legend_html())
         except Exception as exc:
             ui.notify(f"Error generating sample:\n{traceback.format_exc()}", type="negative")
 
@@ -676,7 +678,12 @@ def build_ui(
         # Column 3: Sample generator
         with ui.column().classes("w-1/3 h-full p-4 overflow-auto gap-3"):
             ui.label("Generate Sample").classes("text-lg font-bold")
-            sample_display = ui.textarea(label="Sample output").classes("w-full").props("rows=12 readonly")
+            legend_container = ui.html("").classes("w-full")
+            with ui.card().classes("w-full").style(
+                "min-height:200px;max-height:400px;overflow-y:auto;"
+                "padding:12px;font-family:serif;line-height:1.6"
+            ):
+                sample_display = ui.html("")
 
             with ui.row().classes("gap-2 flex-wrap"):
                 version_select = ui.select(

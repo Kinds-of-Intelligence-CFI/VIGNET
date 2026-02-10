@@ -615,6 +615,29 @@ def build_ui(
 
     ui.page_title("INTUIT JSON Editor")
 
+    # --- Dataset folder check ---
+    if not os.path.isdir(dataset_dir):
+        banner_container = ui.element("div").classes("w-full")
+        with banner_container:
+            with ui.card().classes("w-full bg-yellow-100 border-l-4 border-yellow-500"):
+                with ui.row().classes("items-center gap-4"):
+                    ui.label(
+                        f'Dataset folder "{dataset_dir}" not found. '
+                        "Create it to start adding scenarios."
+                    ).classes("text-yellow-800")
+
+                    def _create_dataset_dir():
+                        try:
+                            os.makedirs(dataset_dir)
+                            ui.notify("Dataset folder created", type="positive")
+                            banner_container.clear()
+                        except OSError as exc:
+                            ui.notify(f"Failed to create folder: {exc}", type="negative")
+
+                    ui.button(
+                        "Create dataset folder", on_click=_create_dataset_dir
+                    ).props("outline")
+
     # --- Top button bar ---
     with ui.row().classes("w-full items-center gap-2 p-2"):
         ui.button("Open JSON", on_click=open_json)

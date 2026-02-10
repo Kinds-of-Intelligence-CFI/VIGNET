@@ -62,9 +62,9 @@ class LocalFilePicker:
 
         try:
             entries = sorted(os.listdir(self._current_dir))
-        except PermissionError:
+        except (PermissionError, FileNotFoundError):
             with self._file_list:
-                ui.label("Permission denied").classes("text-red-500")
+                ui.label("Directory not found or permission denied").classes("text-red-500")
             return
 
         dirs = []

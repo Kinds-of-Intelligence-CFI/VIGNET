@@ -139,24 +139,28 @@ def get_context_template_dict(state: EditorState) -> dict | None:
 # Value conversion
 # ---------------------------------------------------------------------------
 
-def value_from_string(value_str: str, type_str: str) -> Any:
-    """Convert an editor string + type tag to a proper Python value."""
+def value_from_string(value_str: str, type_str: str) -> tuple[Any, str | None]:
+    """Convert an editor string + type tag to a proper Python value.
+
+    Returns (value, None) on success or (None, error_message) on failure.
+    """
     if type_str == "string":
-        return value_str
+        return value_str, None
     elif type_str == "number":
         try:
-            return float(value_str) if "." in value_str else int(value_str)
+            val = float(value_str) if "." in value_str else int(value_str)
+            return val, None
         except ValueError:
-            return 0
+            return None, f"Cannot convert '{value_str}' to a number"
     elif type_str == "boolean":
-        return value_str.lower() == "true"
+        return value_str.lower() == "true", None
     elif type_str == "null":
-        return None
+        return None, None
     elif type_str == "object":
-        return {}
+        return {}, None
     elif type_str == "array":
-        return []
-    return value_str
+        return [], None
+    return value_str, None
 
 
 def type_of_value(value: Any) -> str:
@@ -313,28 +317,44 @@ def _qa_template_paths_in_dir(current_file: str) -> list[str]:
     return paths
 
 
-def append_new_switch_to_qa_files(state: EditorState, version: str) -> None:
+def append_new_switch_to_qa_files(state: EditorState, version: str) -> list[str]:
     """When a new switch is added in the context template, append 0 to every
-    link table in the sibling QA templates."""
+    link table in the sibling QA templates.
+
+    Returns a list of error strings (empty on full success).
+    """
+    errors: list[str] = []
     for qa_path in _qa_template_paths_in_dir(state.current_file):
-        with open(qa_path, "r") as f:
-            qa = json.load(f)
-        for _key, link_table in qa.get("links", {}).items():
-            link_table.append(0)
-        with open(qa_path, "w") as f:
-            json.dump(qa, f, indent=4)
+        try:
+            with open(qa_path, "r") as f:
+                qa = json.load(f)
+            for _key, link_table in qa.get("links", {}).items():
+                link_table.append(0)
+            with open(qa_path, "w") as f:
+                json.dump(qa, f, indent=4)
+        except Exception as exc:
+            errors.append(f"Error updating {os.path.basename(qa_path)}: {exc}")
+    return errors
 
 
-def delete_switch_from_qa_files(state: EditorState, deleted_index: int) -> None:
-    """When a switch is deleted, remove its column from every QA link table."""
+def delete_switch_from_qa_files(state: EditorState, deleted_index: int) -> list[str]:
+    """When a switch is deleted, remove its column from every QA link table.
+
+    Returns a list of error strings (empty on full success).
+    """
+    errors: list[str] = []
     for qa_path in _qa_template_paths_in_dir(state.current_file):
-        with open(qa_path, "r") as f:
-            qa = json.load(f)
-        for _key, link_table in qa.get("links", {}).items():
-            if deleted_index - 1 < len(link_table):
-                del link_table[deleted_index - 1]
-        with open(qa_path, "w") as f:
-            json.dump(qa, f, indent=4)
+        try:
+            with open(qa_path, "r") as f:
+                qa = json.load(f)
+            for _key, link_table in qa.get("links", {}).items():
+                if deleted_index - 1 < len(link_table):
+                    del link_table[deleted_index - 1]
+            with open(qa_path, "w") as f:
+                json.dump(qa, f, indent=4)
+        except Exception as exc:
+            errors.append(f"Error updating {os.path.basename(qa_path)}: {exc}")
+    return errors
 
 
 def delete_switch_value_from_qa_files(
@@ -342,23 +362,31 @@ def delete_switch_value_from_qa_files(
     switch_name: str,
     del_index: int,
     num_values: int,
-) -> None:
+) -> list[str]:
     """When a value is removed from a switch array, decrement any link table
-    entries that pointed at or beyond the deleted index."""
+    entries that pointed at or beyond the deleted index.
+
+    Returns a list of error strings (empty on full success).
+    """
     switch_index = int(switch_name.split("_")[1]) - 1
     del_value = int(del_index)
 
+    errors: list[str] = []
     for qa_path in _qa_template_paths_in_dir(state.current_file):
-        with open(qa_path, "r") as f:
-            qa = json.load(f)
-        for _key, link_table in qa.get("links", {}).items():
-            if switch_index < len(link_table):
-                if link_table[switch_index] > del_value:
-                    link_table[switch_index] -= 1
-                elif link_table[switch_index] == del_value and del_value == num_values - 1:
-                    link_table[switch_index] -= 1
-        with open(qa_path, "w") as f:
-            json.dump(qa, f, indent=4)
+        try:
+            with open(qa_path, "r") as f:
+                qa = json.load(f)
+            for _key, link_table in qa.get("links", {}).items():
+                if switch_index < len(link_table):
+                    if link_table[switch_index] > del_value:
+                        link_table[switch_index] -= 1
+                    elif link_table[switch_index] == del_value and del_value == num_values - 1:
+                        link_table[switch_index] -= 1
+            with open(qa_path, "w") as f:
+                json.dump(qa, f, indent=4)
+        except Exception as exc:
+            errors.append(f"Error updating {os.path.basename(qa_path)}: {exc}")
+    return errors
 
 
 # ---------------------------------------------------------------------------
@@ -394,21 +422,25 @@ def handle_add_special_cases(
     new_key: str,
     new_value: Any,
     state: EditorState,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, list[str]]:
     """Process special cascading side-effects when adding an item.
 
-    Returns (ok, error_message).  If ok is False, the add should be aborted.
+    Returns (ok, error_message, cascading_warnings).
+    If ok is False, the add should be aborted.
+    cascading_warnings is a list of error strings from QA file updates (may be empty).
     """
+    cascading_warnings: list[str] = []
+
     if parent_key == "switches":
         if not isinstance(new_value, list):
-            return False, "Switch values must be an array."
+            return False, "Switch values must be an array.", []
         version = None
         for k in parent_keys:
             if k in POTENTIAL_VERSIONS:
                 version = k
                 break
         if version is not None:
-            append_new_switch_to_qa_files(state, version)
+            cascading_warnings = append_new_switch_to_qa_files(state, version)
 
     elif "switches" in parent_keys:
         parent_path_keys = parent_keys  # ancestor keys from root to parent
@@ -426,7 +458,7 @@ def handle_add_special_cases(
                 return False, (
                     f"Cannot insert switch value in the middle, "
                     f"change key from {new_key} to {len(switch_array)}."
-                )
+                ), []
 
     elif parent_key == "options":
         # adding a new answer option -- mirror into all answer tables
@@ -435,7 +467,7 @@ def handle_add_special_cases(
             return False, (
                 f"Cannot insert answer value in the middle, "
                 f"change key from {new_key} to {answer_length}."
-            )
+            ), []
         for _answer_key, answer_table in json_data.get("answers", {}).items():
             answer_table.append(0)
 
@@ -444,7 +476,7 @@ def handle_add_special_cases(
         num_answers = len(json_data.get("question", {}).get("options", []))
         json_data.setdefault("answers", {})[new_key] = [0] * num_answers
 
-    return True, ""
+    return True, "", cascading_warnings
 
 
 def handle_delete_special_cases(
@@ -453,11 +485,14 @@ def handle_delete_special_cases(
     del_key: str,
     del_value: Any,
     state: EditorState,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, list[str]]:
     """Process cascading side-effects when deleting an item.
 
-    Returns (ok, error_message).
+    Returns (ok, error_message, cascading_warnings).
+    cascading_warnings is a list of error strings from QA file updates (may be empty).
     """
+    cascading_warnings: list[str] = []
+
     if state.is_context_template():
         version = None
         for k in parent_keys:
@@ -471,34 +506,34 @@ def handle_delete_special_cases(
             all_values = collect_leaf_values(version_data)
             for val in all_values:
                 if not validate_var_deletion(val, del_key):
-                    return False, f"Cannot delete key: {del_key} -- it is referenced in text: {val}"
+                    return False, f"Cannot delete key: {del_key} -- it is referenced in text: {val}", []
                 if not validate_var_deletion(val, str(del_value)):
-                    return False, f"Cannot delete value: {del_value} -- it is referenced in text: {val}"
+                    return False, f"Cannot delete value: {del_value} -- it is referenced in text: {val}", []
 
-            if parent_keys and parent_keys[0] == "switches":
+            if parent_keys and parent_keys[-1] == "switches":
                 # deleting a whole switch
                 deleted_index = int(del_key.split("_")[1])
                 reindex_switches_after_delete(json_data[version]["switches"], del_key)
-                delete_switch_from_qa_files(state, deleted_index)
+                cascading_warnings = delete_switch_from_qa_files(state, deleted_index)
 
             elif "switches" in parent_keys:
                 # deleting a value from within a switch array
-                switch_name = parent_keys[0]
+                switch_name = parent_keys[-1]
                 switch_array = json_data[version]["switches"].get(switch_name, [])
                 num_values = len(switch_array)
                 if num_values <= 1:
-                    return False, "Cannot delete the last value in a switch."
-                delete_switch_value_from_qa_files(state, switch_name, int(del_key), num_values)
+                    return False, "Cannot delete the last value in a switch.", []
+                cascading_warnings = delete_switch_value_from_qa_files(state, switch_name, int(del_key), num_values)
 
     else:
         # QA template deletions
         # Check deeper nesting first so "links" -> "0" -> element is caught
         # before the top-level "links" -> table deletion.
         if len(parent_keys) >= 2 and "links" in parent_keys:
-            return False, "Cannot delete item from a link table. Link tables are only modified from the context template."
+            return False, "Cannot delete item from a link table. Link tables are only modified from the context template.", []
 
         elif len(parent_keys) >= 2 and "answers" in parent_keys:
-            return False, "Cannot delete item from an answer table. Answer tables are only modified by changing the options array."
+            return False, "Cannot delete item from an answer table. Answer tables are only modified by changing the options array.", []
 
         elif parent_keys and parent_keys[-1] == "links":
             json_data.get("answers", {}).pop(del_key, None)
@@ -513,7 +548,7 @@ def handle_delete_special_cases(
                 if del_idx < len(answer_table):
                     answer_table.pop(del_idx)
 
-    return True, ""
+    return True, "", cascading_warnings
 
 
 # ---------------------------------------------------------------------------
@@ -683,14 +718,14 @@ def get_next_qa_id(
     return f"{num}.{next_second}.0.0.{v}"
 
 
-def _count_switches_in_context(scenario_dir: str) -> int:
-    """Count the number of switches in version A of the context template."""
+def _count_switches_in_context(scenario_dir: str, version: str = "A") -> int:
+    """Count the number of switches in the given version of the context template."""
     for name in os.listdir(scenario_dir):
         if name.endswith(f"_{CONTEXT_TEMPLATE}"):
             path = os.path.join(scenario_dir, name)
             with open(path, "r") as f:
                 data = json.load(f)
-            return len(data.get("A", {}).get("switches", {}))
+            return len(data.get(version, {}).get("switches", {}))
     return 0
 
 
@@ -714,7 +749,7 @@ def create_qa_template(
     if os.path.exists(file_path):
         return None, f"File '{file_name}' already exists."
 
-    num_switches = _count_switches_in_context(scenario_dir)
+    num_switches = _count_switches_in_context(scenario_dir, version=version)
 
     skeleton = {
         "id": qa_id,

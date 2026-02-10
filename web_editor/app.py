@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import traceback
 
 import pandas as pd
@@ -148,6 +149,10 @@ def build_ui(
             state.current_file = path
             populate_variables(state)
             rebuild_tree()
+            selected_node_id["value"] = None
+            key_input.set_value("")
+            value_textarea.set_value("")
+            type_select.set_value("string")
             status_label.set_text(f"Loaded: {os.path.basename(path)}")
         except json.JSONDecodeError:
             ui.notify("Invalid JSON file", type="negative")
@@ -161,12 +166,32 @@ def build_ui(
         if state.current_file is None:
             ui.notify("No file path set -- open a file first", type="warning")
             return
+        tmp_fd = None
+        tmp_path = None
         try:
-            with open(state.current_file, "w") as f:
-                json.dump(state.json_data, f, indent=4)
+            tmp_fd = tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=os.path.dirname(state.current_file),
+                suffix=".tmp",
+                delete=False,
+            )
+            tmp_path = tmp_fd.name
+            json.dump(state.json_data, tmp_fd, indent=4)
+            tmp_fd.close()
+            tmp_fd = None
+            os.replace(tmp_path, state.current_file)
+            tmp_path = None
             status_label.set_text(f"Saved: {os.path.basename(state.current_file)}")
         except Exception:
             ui.notify(f"Error saving file:\n{traceback.format_exc()}", type="negative")
+        finally:
+            if tmp_fd is not None:
+                tmp_fd.close()
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     async def _open_csv(loader, label: str) -> None:
         picker = LocalFilePicker(
@@ -251,6 +276,10 @@ def build_ui(
                     state.current_file = file_path
                     populate_variables(state)
                     rebuild_tree()
+                    selected_node_id["value"] = None
+                    key_input.set_value("")
+                    value_textarea.set_value("")
+                    type_select.set_value("string")
                     ui.notify(f"Created: {os.path.basename(file_path)}", type="positive")
                     status_label.set_text(f"Created: {os.path.basename(file_path)}")
                     dialog.close()
@@ -324,6 +353,10 @@ def build_ui(
                     state.current_file = file_path
                     populate_variables(state)
                     rebuild_tree()
+                    selected_node_id["value"] = None
+                    key_input.set_value("")
+                    value_textarea.set_value("")
+                    type_select.set_value("string")
                     ui.notify(f"Created: {os.path.basename(file_path)}", type="positive")
                     status_label.set_text(f"Created: {os.path.basename(file_path)}")
                     dialog.close()
@@ -357,7 +390,10 @@ def build_ui(
             return
         parent_keys, parent_key, path = ctx
         new_key = key_input.value
-        new_value = value_from_string(value_textarea.value, type_select.value)
+        new_value, conv_err = value_from_string(value_textarea.value, type_select.value)
+        if conv_err:
+            ui.notify(conv_err, type="negative")
+            return
 
         ok, reason = validate_update(new_key, new_value, parent_keys, parent_key, state)
         if not ok:
@@ -365,8 +401,21 @@ def build_ui(
             return
 
         old_key = path[-1]
+        old_value = get_at_path(state.json_data, path)
+
+        # Bug #3: prevent converting a non-empty container to a scalar
+        if isinstance(old_value, (dict, list)) and len(old_value) > 0 and not isinstance(new_value, (dict, list)):
+            ui.notify("Cannot change a non-empty object/array to a scalar. Delete it first.", type="negative")
+            return
+
+        # Bug #2: prevent key rename from silently overwriting an existing sibling
+        if new_key != old_key:
+            parent = get_at_path(state.json_data, path[:-1])
+            if isinstance(parent, dict) and new_key in parent:
+                ui.notify(f"Key '{new_key}' already exists in this object", type="negative")
+                return
+
         if isinstance(new_value, (dict, list)):
-            old_value = get_at_path(state.json_data, path)
             if not isinstance(old_value, type(new_value)):
                 set_at_path(state.json_data, path, new_value)
         else:
@@ -411,7 +460,10 @@ def build_ui(
         parent_key = path[-1]
 
         new_key = key_input.value
-        new_value = value_from_string(value_textarea.value, type_select.value)
+        new_value, conv_err = value_from_string(value_textarea.value, type_select.value)
+        if conv_err:
+            ui.notify(conv_err, type="negative")
+            return
 
         ok, reason = validate_update(new_key, new_value, parent_keys, parent_key, state)
         if not ok:
@@ -419,12 +471,14 @@ def build_ui(
             return
 
         # special-case cascading logic
-        ok, err = handle_add_special_cases(
+        ok, err, warnings = handle_add_special_cases(
             state.json_data, parent_keys, parent_key, new_key, new_value, state
         )
         if not ok:
             ui.notify(err, type="negative")
             return
+        for w in warnings:
+            ui.notify(w, type="warning")
 
         # perform the actual add
         if isinstance(parent_val, dict):
@@ -473,12 +527,14 @@ def build_ui(
             return
 
         # cascading side-effects
-        ok, err = handle_delete_special_cases(
+        ok, err, warnings = handle_delete_special_cases(
             state.json_data, parent_keys, del_key, del_value, state
         )
         if not ok:
             ui.notify(err, type="negative")
             return
+        for w in warnings:
+            ui.notify(w, type="warning")
 
         # perform the deletion
         delete_at_path(state.json_data, path)

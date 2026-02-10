@@ -25,6 +25,10 @@ from web_editor.editor_logic import (
     get_base_context_number,
     get_next_qa_id,
     create_qa_template,
+    _count_switches_in_context,
+    append_new_switch_to_qa_files,
+    delete_switch_from_qa_files,
+    delete_switch_value_from_qa_files,
     SKELETON_CONTEXT_TEMPLATE,
 )
 
@@ -67,26 +71,42 @@ def _make_state(file_name="test_context_template.json") -> EditorState:
 
 class TestValueConversion:
     def test_string(self):
-        assert value_from_string("hello", "string") == "hello"
+        val, err = value_from_string("hello", "string")
+        assert val == "hello"
+        assert err is None
 
     def test_number_int(self):
-        assert value_from_string("42", "number") == 42
+        val, err = value_from_string("42", "number")
+        assert val == 42
+        assert err is None
 
     def test_number_float(self):
-        assert value_from_string("3.14", "number") == 3.14
+        val, err = value_from_string("3.14", "number")
+        assert val == 3.14
+        assert err is None
 
     def test_boolean(self):
-        assert value_from_string("true", "boolean") is True
-        assert value_from_string("False", "boolean") is False
+        val, err = value_from_string("true", "boolean")
+        assert val is True
+        assert err is None
+        val2, err2 = value_from_string("False", "boolean")
+        assert val2 is False
+        assert err2 is None
 
     def test_null(self):
-        assert value_from_string("anything", "null") is None
+        val, err = value_from_string("anything", "null")
+        assert val is None
+        assert err is None
 
     def test_object(self):
-        assert value_from_string("", "object") == {}
+        val, err = value_from_string("", "object")
+        assert val == {}
+        assert err is None
 
     def test_array(self):
-        assert value_from_string("", "array") == []
+        val, err = value_from_string("", "array")
+        assert val == []
+        assert err is None
 
 
 class TestTypeOfValue:
@@ -208,13 +228,13 @@ class TestHandleAddSpecialCases:
         s = EditorState()
         s.json_data = qa_data
         s.current_file = "/tmp/test_qa_template.json"
-        ok, err = handle_add_special_cases(qa_data, ["question"], "options", "2", "C", s)
+        ok, err, warnings = handle_add_special_cases(qa_data, ["question"], "options", "2", "C", s)
         assert ok is True
         assert qa_data["answers"]["0"] == [1, 0, 0]
 
     def test_switch_value_must_append_at_end(self):
         s = _make_state()
-        ok, err = handle_add_special_cases(
+        ok, err, warnings = handle_add_special_cases(
             s.json_data, ["A", "switches"], "switch_1", "0", "new_val", s
         )
         assert ok is False
@@ -231,7 +251,7 @@ class TestHandleDeleteSpecialCases:
         s = EditorState()
         s.json_data = qa_data
         s.current_file = "/tmp/test_qa_template.json"
-        ok, _ = handle_delete_special_cases(qa_data, ["links"], "1", [1, 0], s)
+        ok, _, warnings = handle_delete_special_cases(qa_data, ["links"], "1", [1, 0], s)
         assert ok is True
         assert "1" not in qa_data["answers"]
 
@@ -240,7 +260,7 @@ class TestHandleDeleteSpecialCases:
         s = EditorState()
         s.json_data = qa_data
         s.current_file = "/tmp/test_qa_template.json"
-        ok, err = handle_delete_special_cases(qa_data, ["links", "0"], "0", 0, s)
+        ok, err, warnings = handle_delete_special_cases(qa_data, ["links", "0"], "0", 0, s)
         assert ok is False
         assert "link table" in err.lower()
 
@@ -501,3 +521,363 @@ class TestCreateQaTemplate:
         with open(path) as f:
             data = json.load(f)
         assert data["links"]["0"] == []
+
+
+# ===================================================================
+# Helper to create a temp directory with context + QA template files
+# ===================================================================
+
+def _make_scenario_dir_with_files(context_data, qa_files):
+    """Create a temp dir with a context template and multiple QA templates.
+
+    context_data: dict for the context template JSON
+    qa_files: dict mapping filename -> dict for QA template JSON
+
+    Returns (tmpdir, context_path, {filename: path}).
+    """
+    tmpdir = tempfile.mkdtemp()
+    ctx_name = "test_context_template.json"
+    ctx_path = os.path.join(tmpdir, ctx_name)
+    with open(ctx_path, "w") as f:
+        json.dump(context_data, f, indent=4)
+
+    qa_paths = {}
+    for name, data in qa_files.items():
+        p = os.path.join(tmpdir, name)
+        with open(p, "w") as f:
+            json.dump(data, f, indent=4)
+        qa_paths[name] = p
+
+    return tmpdir, ctx_path, qa_paths
+
+
+# ===================================================================
+# Bug #5: Switch deletion parent_keys indexing
+# ===================================================================
+
+class TestDeleteSwitchCascading:
+    """Bug #5: parent_keys[0] should be parent_keys[-1] when detecting
+    switch deletions in handle_delete_special_cases."""
+
+    def setup_method(self):
+        self.context_data = {
+            "A": {
+                "context": "text",
+                "filler": {"0": ""},
+                "variables": [],
+                "items": {},
+                "activities": {},
+                "switches": {
+                    "switch_1": ["val_a", "val_b"],
+                    "switch_2": ["x", "y", "z"],
+                },
+                "coinflips": {},
+            },
+            "B": {
+                "context": "",
+                "filler": {"0": ""},
+                "variables": [],
+                "items": {},
+                "activities": {},
+                "switches": {},
+                "coinflips": {},
+            },
+        }
+        self.qa_data = {
+            "links": {"0": [0, 1], "1": [1, 2]},
+            "answers": {"0": [1, 0], "1": [0, 1]},
+            "question": {"prompt": "Q?", "options": ["A", "B"]},
+        }
+        self.tmpdir, self.ctx_path, self.qa_paths = _make_scenario_dir_with_files(
+            self.context_data,
+            {"1.0.0.0.a_qa_template.json": self.qa_data},
+        )
+
+    def test_delete_whole_switch_cascades_to_qa(self):
+        """Deleting switch_2 should remove column index 1 from QA link tables."""
+        json_data = copy.deepcopy(self.context_data)
+        s = EditorState()
+        s.json_data = json_data
+        s.current_file = self.ctx_path
+
+        # parent_keys for deleting switch_2 from root.A.switches
+        # path is ["root", "A", "switches", "switch_2"]
+        # parent_keys = path[1:-1] = ["A", "switches"]
+        ok, err, warnings = handle_delete_special_cases(
+            json_data, ["A", "switches"], "switch_2", ["x", "y", "z"], s
+        )
+        assert ok is True, f"Expected ok=True, got err: {err}"
+
+        # QA file should now have only 1 element per link table (switch_2 removed)
+        qa_path = self.qa_paths["1.0.0.0.a_qa_template.json"]
+        with open(qa_path) as f:
+            qa = json.load(f)
+        for _key, link_table in qa["links"].items():
+            assert len(link_table) == 1, f"Expected 1 element, got {len(link_table)}"
+
+    def test_delete_switch_value_cascades_to_qa(self):
+        """Deleting index 2 from switch_2 should update QA link tables."""
+        json_data = copy.deepcopy(self.context_data)
+        s = EditorState()
+        s.json_data = json_data
+        s.current_file = self.ctx_path
+
+        # parent_keys for deleting value at index 2 from switch_2 array
+        # path is ["root", "A", "switches", "switch_2", "2"]
+        # parent_keys = path[1:-1] = ["A", "switches", "switch_2"]
+        ok, err, warnings = handle_delete_special_cases(
+            json_data, ["A", "switches", "switch_2"], "2", "z", s
+        )
+        assert ok is True, f"Expected ok=True, got err: {err}"
+
+        # QA link tables should have been adjusted for deleted value index=2
+        qa_path = self.qa_paths["1.0.0.0.a_qa_template.json"]
+        with open(qa_path) as f:
+            qa = json.load(f)
+        # link table "1" had switch_index=1 value=2, which should be decremented to 1
+        # (since del_value == num_values - 1 = 2)
+        assert qa["links"]["1"][1] == 1
+
+
+# ===================================================================
+# Bug #6: _count_switches_in_context always reads version A
+# ===================================================================
+
+class TestCountSwitchesInContext:
+    """Bug #6: _count_switches_in_context ignores version parameter."""
+
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        ctx = copy.deepcopy(SKELETON_CONTEXT_TEMPLATE)
+        ctx["A"]["switches"] = {"switch_1": ["a", "b"]}
+        ctx["B"]["switches"] = {"switch_1": ["x", "y"], "switch_2": ["p", "q"], "switch_3": ["r"]}
+        with open(os.path.join(self.tmpdir, "test_context_template.json"), "w") as f:
+            json.dump(ctx, f)
+
+    def test_default_counts_version_a(self):
+        count = _count_switches_in_context(self.tmpdir)
+        assert count == 1
+
+    def test_version_b_counts_correctly(self):
+        """Should count 3 switches when version='B' is passed."""
+        count = _count_switches_in_context(self.tmpdir, version="B")
+        assert count == 3
+
+    def test_version_a_explicit(self):
+        count = _count_switches_in_context(self.tmpdir, version="A")
+        assert count == 1
+
+
+# ===================================================================
+# Bug #7: value_from_string silently returns 0 for invalid numbers
+# ===================================================================
+
+class TestValueFromStringTupleReturn:
+    """Bug #7: value_from_string should return (value, error_or_none) tuple."""
+
+    def test_valid_string(self):
+        val, err = value_from_string("hello", "string")
+        assert val == "hello"
+        assert err is None
+
+    def test_valid_int(self):
+        val, err = value_from_string("42", "number")
+        assert val == 42
+        assert err is None
+
+    def test_valid_float(self):
+        val, err = value_from_string("3.14", "number")
+        assert val == 3.14
+        assert err is None
+
+    def test_invalid_number_returns_error(self):
+        val, err = value_from_string("abc", "number")
+        assert val is None
+        assert err is not None
+        assert "abc" in err
+
+    def test_boolean_true(self):
+        val, err = value_from_string("true", "boolean")
+        assert val is True
+        assert err is None
+
+    def test_boolean_false(self):
+        val, err = value_from_string("False", "boolean")
+        assert val is False
+        assert err is None
+
+    def test_null(self):
+        val, err = value_from_string("anything", "null")
+        assert val is None
+        assert err is None
+
+    def test_object(self):
+        val, err = value_from_string("", "object")
+        assert val == {}
+        assert err is None
+
+    def test_array(self):
+        val, err = value_from_string("", "array")
+        assert val == []
+        assert err is None
+
+    def test_unknown_type(self):
+        val, err = value_from_string("hello", "unknown_type")
+        assert val == "hello"
+        assert err is None
+
+
+# ===================================================================
+# Bug #8: Cascading QA file writes have no error handling
+# ===================================================================
+
+class TestCascadingErrorHandling:
+    """Bug #8: append/delete_switch QA file functions should return error lists."""
+
+    def setup_method(self):
+        self.context_data = {
+            "A": {
+                "context": "",
+                "filler": {"0": ""},
+                "variables": [],
+                "items": {},
+                "activities": {},
+                "switches": {"switch_1": ["a", "b"]},
+                "coinflips": {},
+            },
+            "B": {
+                "context": "",
+                "filler": {"0": ""},
+                "variables": [],
+                "items": {},
+                "activities": {},
+                "switches": {},
+                "coinflips": {},
+            },
+        }
+        self.qa_data = {
+            "links": {"0": [0]},
+            "answers": {"0": [1, 0]},
+            "question": {"prompt": "Q?", "options": ["A", "B"]},
+        }
+
+    def test_append_returns_empty_list_on_success(self):
+        tmpdir, ctx_path, _ = _make_scenario_dir_with_files(
+            self.context_data,
+            {"1.0.0.0.a_qa_template.json": self.qa_data},
+        )
+        s = EditorState()
+        s.json_data = copy.deepcopy(self.context_data)
+        s.current_file = ctx_path
+        errors = append_new_switch_to_qa_files(s, "A")
+        assert isinstance(errors, list)
+        assert len(errors) == 0
+
+    def test_delete_switch_returns_empty_list_on_success(self):
+        tmpdir, ctx_path, _ = _make_scenario_dir_with_files(
+            self.context_data,
+            {"1.0.0.0.a_qa_template.json": self.qa_data},
+        )
+        s = EditorState()
+        s.json_data = copy.deepcopy(self.context_data)
+        s.current_file = ctx_path
+        errors = delete_switch_from_qa_files(s, 1)
+        assert isinstance(errors, list)
+        assert len(errors) == 0
+
+    def test_delete_switch_value_returns_empty_list_on_success(self):
+        tmpdir, ctx_path, _ = _make_scenario_dir_with_files(
+            self.context_data,
+            {"1.0.0.0.a_qa_template.json": self.qa_data},
+        )
+        s = EditorState()
+        s.json_data = copy.deepcopy(self.context_data)
+        s.current_file = ctx_path
+        errors = delete_switch_value_from_qa_files(s, "switch_1", 0, 2)
+        assert isinstance(errors, list)
+        assert len(errors) == 0
+
+    def test_append_returns_errors_for_corrupt_file(self):
+        tmpdir = tempfile.mkdtemp()
+        ctx_path = os.path.join(tmpdir, "test_context_template.json")
+        with open(ctx_path, "w") as f:
+            json.dump(self.context_data, f)
+        # Write a corrupt (non-JSON) QA file
+        corrupt_path = os.path.join(tmpdir, "1.0.0.0.a_qa_template.json")
+        with open(corrupt_path, "w") as f:
+            f.write("NOT VALID JSON {{{")
+        s = EditorState()
+        s.json_data = copy.deepcopy(self.context_data)
+        s.current_file = ctx_path
+        errors = append_new_switch_to_qa_files(s, "A")
+        assert isinstance(errors, list)
+        assert len(errors) == 1
+        assert "1.0.0.0.a_qa_template.json" in errors[0]
+
+    def test_delete_switch_returns_errors_for_corrupt_file(self):
+        tmpdir = tempfile.mkdtemp()
+        ctx_path = os.path.join(tmpdir, "test_context_template.json")
+        with open(ctx_path, "w") as f:
+            json.dump(self.context_data, f)
+        corrupt_path = os.path.join(tmpdir, "1.0.0.0.a_qa_template.json")
+        with open(corrupt_path, "w") as f:
+            f.write("NOT VALID JSON")
+        s = EditorState()
+        s.json_data = copy.deepcopy(self.context_data)
+        s.current_file = ctx_path
+        errors = delete_switch_from_qa_files(s, 1)
+        assert isinstance(errors, list)
+        assert len(errors) == 1
+
+    def test_delete_switch_value_returns_errors_for_corrupt_file(self):
+        tmpdir = tempfile.mkdtemp()
+        ctx_path = os.path.join(tmpdir, "test_context_template.json")
+        with open(ctx_path, "w") as f:
+            json.dump(self.context_data, f)
+        corrupt_path = os.path.join(tmpdir, "1.0.0.0.a_qa_template.json")
+        with open(corrupt_path, "w") as f:
+            f.write("NOT VALID JSON")
+        s = EditorState()
+        s.json_data = copy.deepcopy(self.context_data)
+        s.current_file = ctx_path
+        errors = delete_switch_value_from_qa_files(s, "switch_1", 0, 2)
+        assert isinstance(errors, list)
+        assert len(errors) == 1
+
+    def test_handle_add_returns_cascading_warnings(self):
+        """handle_add_special_cases should return 3-tuple with cascading warnings."""
+        tmpdir, ctx_path, _ = _make_scenario_dir_with_files(
+            self.context_data,
+            {"1.0.0.0.a_qa_template.json": self.qa_data},
+        )
+        json_data = copy.deepcopy(self.context_data)
+        s = EditorState()
+        s.json_data = json_data
+        s.current_file = ctx_path
+
+        result = handle_add_special_cases(
+            json_data, ["A"], "switches", "switch_2", ["new_val"], s
+        )
+        assert len(result) == 3
+        ok, msg, warnings = result
+        assert ok is True
+        assert isinstance(warnings, list)
+
+    def test_handle_delete_returns_cascading_warnings(self):
+        """handle_delete_special_cases should return 3-tuple with cascading warnings."""
+        tmpdir, ctx_path, _ = _make_scenario_dir_with_files(
+            self.context_data,
+            {"1.0.0.0.a_qa_template.json": self.qa_data},
+        )
+        json_data = copy.deepcopy(self.context_data)
+        s = EditorState()
+        s.json_data = json_data
+        s.current_file = ctx_path
+
+        result = handle_delete_special_cases(
+            json_data, ["A", "switches"], "switch_1", ["a", "b"], s
+        )
+        assert len(result) == 3
+        ok, msg, warnings = result
+        assert ok is True
+        assert isinstance(warnings, list)
